@@ -3,7 +3,11 @@
 #include "PinChangeInterrupt.h"
 
 
+<<<<<<< HEAD
 #define BOATID 0x8787
+=======
+#define BOATID 0x87878787
+>>>>>>> a2e405b (fixed bugs)
 #define FBBUFFSIZE 2
 #define MAXRETRIES 5
 #define hod_svetl 3

@@ -1,7 +1,11 @@
 #include <Arduino.h>
 #include <LoRa.h>
 
+<<<<<<< HEAD
 #define BOATID 0x8787
+=======
+#define BOATID 0x87878787
+>>>>>>> a2e405b (fixed bugs)
 #define MODUL 2
 
 #define hod_svetl A0

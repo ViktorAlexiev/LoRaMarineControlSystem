@@ -1,7 +1,11 @@
 #include <Arduino.h>
 #include <LoRa.h>
 
+<<<<<<< HEAD
 #define BOATID 0x8787
+=======
+#define BOATID 0x87878787
+>>>>>>> a2e405b (fixed bugs)
 #define MODUL 1
 
 #define predna_P 3
@@ -49,16 +53,34 @@ void handleError(const char* msg){
 }
 
 void handle_recieve(){
+<<<<<<< HEAD
   myPacket myData;
   int len = LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
 
   if (len != sizeof(myData)) {
     // incomplete packet → discard
+=======
+  int packetSize = LoRa.parsePacket();
+  if (packetSize == 0) return;
+  
+  myPacket myData;
+  
+  if (packetSize != sizeof(myData)) {
+    while (LoRa.available()) LoRa.read();
+    return;
+  }
+
+  if (packetSize != sizeof(myData)) {
+>>>>>>> a2e405b (fixed bugs)
     return;
   }
   LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
 
   if(myData.boatID != BOATID || myData.moduleID != MODUL){ return;}
+<<<<<<< HEAD
+=======
+  
+>>>>>>> a2e405b (fixed bugs)
   if(myData.konsumator != rudan){
     digitalWrite(pins[myData.konsumator-4], myData.command);
   }else{
