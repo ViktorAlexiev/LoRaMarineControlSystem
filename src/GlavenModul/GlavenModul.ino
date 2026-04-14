@@ -1,17 +1,35 @@
+#include <Arduino.h>
 #include <LoRa.h>
+#include "PinChangeInterrupt.h"
+
 
 #define BOATID 0x8787
 #define FBBUFFSIZE 2
-#define MAXRETRIES 5;
+#define MAXRETRIES 5
+#define hod_svetl 3
+#define sirenaa 4
+#define zadna_p A0
+#define predna_p A1
+#define rudann 6
+#define rudan_allow 5
+#define led_pin 7
+
+enum modules{
+  preden=1,
+  zaden
+};
+
+enum konsumatori{
+  hodovi=1,
+  sirena,
+  zadnaP,
+  prednaP,
+  rudan
+};
 
 enum commands{
-  chervena,
-  zelena,
-  bqla,
-  sirena,
-  zadna,
-  predna,
-  rudan
+  OFF = 0,
+  ON = 1
 };
 
 enum states{
@@ -30,6 +48,7 @@ enum errorCodes{
 struct myPacket {
   uint32_t boatID;
   uint8_t moduleID;
+  uint8_t konsumator;
   uint8_t command;
 };
 
@@ -44,10 +63,15 @@ void resetPacket(struct myPacket *p)
 
     p->boatID   = 0;
     p->moduleID = 0;
+    p->konsumator  = 0;
     p->command  = 0;
 }
 
 void handleIdle(){
+}
+
+void handleError(const char* msg){
+  Serial.println(msg);
 }
 
 int findFirstZeroed(struct myPacket arr[], size_t len)
@@ -69,9 +93,8 @@ const long interval = 1000;
 
 uint8_t bufferRetries[FBBUFFSIZE] = {0};  
 
-void sendcommand(uint8_t moduleID, uint8_t command){
-  myPacket pack = {BOATID, moduleID, command };
-  
+void sendCommand(uint8_t moduleID, uint8_t konsumator, uint8_t command){
+  myPacket pack = {BOATID, moduleID, konsumator, command};
   LoRa.beginPacket();
   LoRa.write((uint8_t*)&pack, sizeof(pack));
   LoRa.endPacket();
@@ -91,10 +114,12 @@ void sendcommand(uint8_t moduleID, uint8_t command){
     }else{
       previousMillis[index] = millis();
     }
+    currentState = AWAITFEEDBACK;
     
   }else{
     handleError("feedback buffer is full");
   }
+  
   
 }
 
@@ -146,14 +171,74 @@ void awaitFeedback(myPacket *feedbackBuffer){
   }
 }
 
-void handleError(char *msg){
-  Serial.println(msg);
+void isr_hodovi() {
+  if (digitalRead(hod_svetl) == LOW)
+    sendCommand(zaden, hodovi, ON);
+  else
+    sendCommand(zaden, hodovi, OFF);
 }
 
+void isr_sirena() {
+  if (digitalRead(sirena) == LOW)
+    sendCommand(zaden, sirena, ON);
+  else
+    sendCommand(zaden, sirena, OFF);
+}
 
+void isr_zadnaP() {
+  if (digitalRead(zadna_p) == LOW)
+    sendCommand(zaden, zadnaP, ON);
+  else
+    sendCommand(zaden, zadnaP, OFF);
+}
+
+void isr_prednaP() {
+  if (digitalRead(predna_p) == LOW)
+    sendCommand(preden, prednaP, ON);
+  else
+    sendCommand(preden, prednaP, OFF);
+}
+
+bool allow_rudan = 0;
+
+void isr_rudan() {
+  if (digitalRead(rudan) == LOW) {
+    if (allow_rudan) {
+      sendCommand(preden, rudan, ON);
+    }
+  } else {
+    sendCommand(preden, rudan, OFF);
+  }
+}
+
+void isr_rudan_allow() {
+  if (digitalRead(rudan) == LOW) {
+    allow_rudan = 1;
+  } else {
+    allow_rudan = 0;
+    sendCommand(preden, rudan, OFF);
+  }
+}
 
 void setup(){
   Serial.begin(115200);
+
+  // set all pins as INPUT_PULLUP
+  pinMode(hod_svetl,   INPUT_PULLUP);
+  pinMode(sirenaa,      INPUT_PULLUP);
+  pinMode(zadna_p,     INPUT_PULLUP);
+  pinMode(predna_p,    INPUT_PULLUP);
+  pinMode(rudann,       INPUT_PULLUP);
+  pinMode(rudan_allow, INPUT_PULLUP);
+  pinMode(led_pin,     OUTPUT);
+
+  // attach pin change interrupts
+  attachPCINT(digitalPinToPCINT(hod_svetl),  isr_hodovi,  CHANGE);
+  attachPCINT(digitalPinToPCINT(sirena),     isr_sirena,  CHANGE);
+  attachPCINT(digitalPinToPCINT(zadna_p),    isr_zadnaP,  CHANGE);
+  attachPCINT(digitalPinToPCINT(predna_p),   isr_prednaP, CHANGE);
+  attachPCINT(digitalPinToPCINT(rudan),      isr_rudan,   CHANGE);
+  attachPCINT(digitalPinToPCINT(rudan_allow),      isr_rudan_allow,   CHANGE);
 
   if(!LoRa.begin(433E6)){
       Serial.println("LoRa transmitter not working");
