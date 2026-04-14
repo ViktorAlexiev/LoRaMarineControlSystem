@@ -42,7 +42,7 @@ enum states currentState = MYIDLE;
 /*struct awaitedPacket {
 enum errorCodes{
   ELECTRICAL_FAILURE
-};      да се имплементира система за приемане на информация за грешки */
+};      да се имплементира система за приемане на информация за грешки при електрическите консуматори */
 
 
 struct myPacket {
@@ -58,7 +58,7 @@ const struct myPacket ZERO_PACKET = {0};
 void resetPacket(struct myPacket *p)
 {
     if (p == NULL) {
-        return; // safety check
+        return;
     }
 
     p->boatID   = 0;
