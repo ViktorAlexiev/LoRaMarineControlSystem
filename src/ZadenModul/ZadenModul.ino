@@ -16,7 +16,7 @@ enum konsumatori{
   zadnaP
 };
 
-struct myPacket {
+struct __attribute__((packed))myPacket {
   uint32_t boatID;
   uint8_t moduleID;
   uint8_t konsumator;
@@ -38,6 +38,7 @@ void setup() {
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
   LoRa.enableCrc();
+  LoRa.receive();
 }
 
 void loop() {
@@ -49,11 +50,17 @@ void handleError(const char* msg){
 }
 
 void handle_recieve(){
+  int packetSize = LoRa.parsePacket();
+  if (packetSize == 0) return;
+  
   myPacket myData;
-  int len = LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
+  
+  if (packetSize != sizeof(myData)) {
+    while (LoRa.available()) LoRa.read();
+    return;
+  }
 
-  if (len != sizeof(myData)) {
-    // incomplete packet → discard
+  if (packetSize != sizeof(myData)) {
     return;
   }
   LoRa.readBytes((uint8_t*)&myData, sizeof(myData));

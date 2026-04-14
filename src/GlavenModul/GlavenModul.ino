@@ -39,13 +39,13 @@ enum states{
 
 enum states currentState = MYIDLE;
 
-/*struct awaitedPacket {
+/*
 enum errorCodes{
   ELECTRICAL_FAILURE
 };      да се имплементира система за приемане на информация за грешки при електрическите консуматори */
 
 
-struct myPacket {
+struct __attribute__((packed))myPacket {
   uint32_t boatID;
   uint8_t moduleID;
   uint8_t konsumator;
@@ -87,7 +87,7 @@ int findFirstZeroed(struct myPacket arr[], size_t len)
     return -1; // none found
 }
 
-myPacket feedbackBuffer[FBBUFFSIZE];
+struct myPacket feedbackBuffer[FBBUFFSIZE];
 unsigned long previousMillis[FBBUFFSIZE] = {0};  
 const long interval = 1000;        
 
@@ -102,18 +102,8 @@ void sendCommand(uint8_t moduleID, uint8_t konsumator, uint8_t command){
   if(index != -1){
     feedbackBuffer[index] = pack;
     bufferRetries[index] = 0;
-    int maxValue = previousMillis[0];
-    for (int i = 1; i < FBBUFFSIZE; i++) {
-        if (previousMillis[i] > maxValue) {
-            maxValue = previousMillis[i];
-        }
-    }
+    previousMillis[index] = millis();
     
-    if(maxValue!=0){
-      previousMillis[index] = maxValue+100;
-    }else{
-      previousMillis[index] = millis();
-    }
     currentState = AWAITFEEDBACK;
     
   }else{
@@ -140,18 +130,21 @@ void awaitFeedback(myPacket *feedbackBuffer){
   }
   
   myPacket myData;
-  LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
+  int packetSize = LoRa.parsePacket();
+  if(packetSize == sizeof(myPacket)) {
+      LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
+  }
   unsigned long currentMillis = millis();
 
   for(int i=0; i<FBBUFFSIZE; i++){
-    if(memcmp(&feedbackBuffer[i], &myData, sizeof(struct myPacket)) != 0){
+    if(memcmp(&feedbackBuffer[i], &myData, sizeof(struct myPacket)) == 0){
        resetPacket(&feedbackBuffer[i]);
        feedbackRecieved[i] = 1;
        previousMillis[i] = 0;
        bufferRetries[i] = 0;
     }
 
-    if(bufferRetries[i] >= 5){ // да се смени с макрото ама не знам защо дава expected primary-expression before ')' token
+    if (bufferRetries[i] >= MAXRETRIES){
        handleError("Error in radio communication");
        resetPacket(&feedbackBuffer[i]);
        feedbackRecieved[i] = 1;
@@ -161,7 +154,7 @@ void awaitFeedback(myPacket *feedbackBuffer){
 
     if(feedbackRecieved[i] != 1 && bufferRetries[i]<5){
       if (currentMillis - previousMillis[i] >= interval) {
-        previousMillis[i] = currentMillis;
+        previousMillis[i] = currentMillis + random(0, 150);
         LoRa.beginPacket();
         LoRa.write((uint8_t*)&feedbackBuffer[i], sizeof(feedbackBuffer[i]));
         LoRa.endPacket();
@@ -171,53 +164,36 @@ void awaitFeedback(myPacket *feedbackBuffer){
   }
 }
 
+volatile bool ev_hodovi = false;
+volatile bool ev_sirena = false;
+volatile bool ev_zadnaP = false;
+volatile bool ev_prednaP = false;
+
+volatile bool ev_rudan = false;
+volatile bool ev_rudan_allow = false;
+
 void isr_hodovi() {
-  if (digitalRead(hod_svetl) == LOW)
-    sendCommand(zaden, hodovi, ON);
-  else
-    sendCommand(zaden, hodovi, OFF);
+  ev_hodovi = true;
 }
 
 void isr_sirena() {
-  if (digitalRead(sirena) == LOW)
-    sendCommand(zaden, sirena, ON);
-  else
-    sendCommand(zaden, sirena, OFF);
+  ev_sirena = true;
 }
 
 void isr_zadnaP() {
-  if (digitalRead(zadna_p) == LOW)
-    sendCommand(zaden, zadnaP, ON);
-  else
-    sendCommand(zaden, zadnaP, OFF);
+  ev_zadnaP = true;
 }
 
 void isr_prednaP() {
-  if (digitalRead(predna_p) == LOW)
-    sendCommand(preden, prednaP, ON);
-  else
-    sendCommand(preden, prednaP, OFF);
+  ev_prednaP = true;
 }
-
-bool allow_rudan = 0;
 
 void isr_rudan() {
-  if (digitalRead(rudan) == LOW) {
-    if (allow_rudan) {
-      sendCommand(preden, rudan, ON);
-    }
-  } else {
-    sendCommand(preden, rudan, OFF);
-  }
+  ev_rudan = true;
 }
-
+bool allow_rudan = 0;
 void isr_rudan_allow() {
-  if (digitalRead(rudan) == LOW) {
-    allow_rudan = 1;
-  } else {
-    allow_rudan = 0;
-    sendCommand(preden, rudan, OFF);
-  }
+  ev_rudan_allow = true;
 }
 
 void setup(){
@@ -250,11 +226,63 @@ void setup(){
 }
 
 void loop(){
+  if (ev_hodovi) {
+    ev_hodovi = false;
+  
+    if (digitalRead(hod_svetl) == LOW)
+      sendCommand(zaden, hodovi, ON);
+    else
+      sendCommand(zaden, hodovi, OFF);
+  }
+  
+  if (ev_sirena) {
+    ev_sirena = false;
+  
+    if (digitalRead(sirenaa) == LOW)
+      sendCommand(zaden, sirena, ON);
+    else
+      sendCommand(zaden, sirena, OFF);
+  }
+  
+  if (ev_zadnaP) {
+    ev_zadnaP = false;
+  
+    if (digitalRead(zadna_p) == LOW)
+      sendCommand(zaden, zadnaP, ON);
+    else
+      sendCommand(zaden, zadnaP, OFF);
+  }
+  
+  if (ev_prednaP) {
+    ev_prednaP = false;
+  
+    if (digitalRead(predna_p) == LOW)
+      sendCommand(preden, prednaP, ON);
+    else
+      sendCommand(preden, prednaP, OFF);
+  }
+  
+  if (ev_rudan_allow) {
+    ev_rudan_allow = false;
+  
+    allow_rudan = (digitalRead(rudan_allow) == LOW);
+    if(!allow_rudan)sendCommand(preden, rudan, OFF);
+  }
+  
+  if (ev_rudan) {
+    ev_rudan = false;
+  
+    if (digitalRead(rudan) == LOW && allow_rudan) {
+      sendCommand(preden, rudan, ON);
+    } else {
+      sendCommand(preden, rudan, OFF);
+    }
+  }
   switch(currentState) {
-    case 0:
+    case MYIDLE:
       handleIdle();
       break;
-    case 1:
+    case AWAITFEEDBACK:
       awaitFeedback(feedbackBuffer);
       break;
     default:
