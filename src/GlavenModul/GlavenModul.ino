@@ -3,11 +3,7 @@
 #include "PinChangeInterrupt.h"
 
 
-<<<<<<< HEAD
-#define BOATID 0x8787
-=======
 #define BOATID 0x87878787
->>>>>>> a2e405b (fixed bugs)
 #define FBBUFFSIZE 2
 #define MAXRETRIES 5
 #define hod_svetl 3
@@ -23,6 +19,17 @@ enum modules{
   zaden
 };
 
+enum moduleStatus {
+  working = 1,
+  communication_error 
+};
+
+struct ModuleStatus {
+  uint8_t preden = working;
+  uint8_t zaden = working;
+};
+
+struct ModuleStatus modStatus;
 enum konsumatori{
   hodovi=1,
   sirena,
@@ -30,6 +37,8 @@ enum konsumatori{
   prednaP,
   rudan
 };
+
+uint8_t consumerStates[5] = {0};
 
 enum commands{
   OFF = 0,
@@ -43,10 +52,9 @@ enum states{
 
 enum states currentState = MYIDLE;
 
-/*
 enum errorCodes{
   ELECTRICAL_FAILURE
-};      да се имплементира система за приемане на информация за грешки при електрическите консуматори */
+};
 
 
 struct __attribute__((packed))myPacket {
@@ -146,6 +154,7 @@ void awaitFeedback(myPacket *feedbackBuffer){
        feedbackRecieved[i] = 1;
        previousMillis[i] = 0;
        bufferRetries[i] = 0;
+       consumerStates[feedbackBuffer[i].konsumator-1] = feedbackBuffer[i].command;
     }
 
     if (bufferRetries[i] >= MAXRETRIES){
@@ -154,6 +163,11 @@ void awaitFeedback(myPacket *feedbackBuffer){
        feedbackRecieved[i] = 1;
        previousMillis[i] = 0;
        bufferRetries[i] = 0;
+       if(feedbackBuffer[i].moduleID == preden){
+          modStatus.preden = communication_error;
+       }else{
+          modStatus.zaden = communication_error;
+       }
     }
 
     if(feedbackRecieved[i] != 1 && bufferRetries[i]<5){
@@ -163,6 +177,11 @@ void awaitFeedback(myPacket *feedbackBuffer){
         LoRa.write((uint8_t*)&feedbackBuffer[i], sizeof(feedbackBuffer[i]));
         LoRa.endPacket();
         bufferRetries[i]+=1;
+        if(feedbackBuffer[i].moduleID == preden){
+           modStatus.preden = working;
+        }else{
+           modStatus.zaden = working;
+        }
       }
     }
   }
@@ -227,6 +246,12 @@ void setup(){
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
   LoRa.enableCrc();
+
+  sendCommand(zaden, hodovi, OFF);
+  sendCommand(zaden, sirena, OFF);
+  sendCommand(zaden, zadnaP, OFF);
+  sendCommand(preden, prednaP, OFF);
+  sendCommand(preden, rudan, OFF);
 }
 
 void loop(){
