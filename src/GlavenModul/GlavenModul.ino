@@ -1,320 +1,264 @@
 #include <Arduino.h>
 #include <LoRa.h>
-#include "PinChangeInterrupt.h"
 
+#define LORA_SCK   5
+#define LORA_MISO  19
+#define LORA_MOSI  27
+#define LORA_SS    18
+#define LORA_RST   14
+#define LORA_DIO0  26
 
-#define BOATID 0x87878787
-#define FBBUFFSIZE 2
-#define MAXRETRIES 5
-#define hod_svetl 3
-#define sirenaa 4
-#define zadna_p A0
-#define predna_p A1
-#define rudann 6
-#define rudan_allow 5
-#define led_pin 7
+#define BOATID         0x87878787
+#define FBBUFFSIZE     8      // feedback (TX) buffer size
+#define RXBUFFSIZE     8      // receive (RX) buffer size
+#define MAXRETRIES     10
+#define TX_DELAY_MS    500    // чака 500ms преди да праща следващото от опашката
 
-enum modules{
-  preden=1,
-  zaden
-};
-
-enum moduleStatus {
-  working = 1,
-  communication_error 
-};
+enum modules   { preden = 1, zaden };
+enum moduleStatus { working = 1, communication_error };
 
 struct ModuleStatus {
   uint8_t preden = working;
-  uint8_t zaden = working;
+  uint8_t zaden  = working;
 };
 
 struct ModuleStatus modStatus;
-enum konsumatori{
-  hodovi=1,
-  sirena,
-  zadnaP,
-  prednaP,
-  rudan
-};
 
-uint8_t consumerStates[5] = {0};
+enum konsumatori { hodovi = 1, sirena, zadnaP, prednaP, rudan };
+enum commands    { OFF = 0, ON = 1 };
 
-enum commands{
-  OFF = 0,
-  ON = 1
-};
-
-enum states{
-  MYIDLE,
-  AWAITFEEDBACK
-};
-
-enum states currentState = MYIDLE;
-
-enum errorCodes{
-  ELECTRICAL_FAILURE
-};
-
-
-struct __attribute__((packed))myPacket {
+struct __attribute__((packed)) myPacket {
   uint32_t boatID;
-  uint8_t moduleID;
-  uint8_t konsumator;
-  uint8_t command;
+  uint8_t  moduleID;
+  uint8_t  konsumator;
+  uint8_t  command;
 };
-
 
 const struct myPacket ZERO_PACKET = {0};
 
-void resetPacket(struct myPacket *p)
-{
-    if (p == NULL) {
-        return;
+// ─────────────────────────────────────────────
+//  TX ОПАШКА  (sendCommand добавя тук, manager праща)
+// ─────────────────────────────────────────────
+struct myPacket  txQueue[FBBUFFSIZE];
+uint8_t          txHead = 0;   // следващото за пращане
+uint8_t          txTail = 0;   // следващото свободно място
+uint8_t          txCount = 0;
+
+bool txQueuePush(struct myPacket p) {
+  if (txCount >= FBBUFFSIZE) return false;
+  txQueue[txTail] = p;
+  txTail = (txTail + 1) % FBBUFFSIZE;
+  txCount++;
+  return true;
+}
+
+bool txQueuePop(struct myPacket *out) {
+  if (txCount == 0) return false;
+  *out = txQueue[txHead];
+  txHead = (txHead + 1) % FBBUFFSIZE;
+  txCount--;
+  return true;
+}
+
+// ─────────────────────────────────────────────
+//  FEEDBACK БУФЕР  (очаква ACK за изпратен пакет)
+// ─────────────────────────────────────────────
+struct myPacket  feedbackBuffer[FBBUFFSIZE];
+unsigned long    fbTimestamp[FBBUFFSIZE]  = {0};
+uint8_t          fbRetries[FBBUFFSIZE]    = {0};
+const long       retryInterval = 2000;
+
+int fbFindEmpty() {
+  for (int i = 0; i < FBBUFFSIZE; i++)
+    if (memcmp(&feedbackBuffer[i], &ZERO_PACKET, sizeof(myPacket)) == 0)
+      return i;
+  return -1;
+}
+
+void fbAdd(struct myPacket p) {
+  int idx = fbFindEmpty();
+  if (idx == -1) { Serial.println("[ERR] feedback buffer full"); return; }
+  feedbackBuffer[idx] = p;
+  fbTimestamp[idx]    = millis();
+  fbRetries[idx]      = 0;
+}
+
+void fbClear(int idx) {
+  memset(&feedbackBuffer[idx], 0, sizeof(myPacket));
+  fbTimestamp[idx] = 0;
+  fbRetries[idx]   = 0;
+}
+
+// ─────────────────────────────────────────────
+//  RX БУФЕР  (получени пакети чакат да бъдат обработени)
+// ─────────────────────────────────────────────
+struct myPacket rxBuffer[RXBUFFSIZE];
+uint8_t rxHead  = 0;
+uint8_t rxTail  = 0;
+uint8_t rxCount = 0;
+
+bool rxPush(struct myPacket p) {
+  if (rxCount >= RXBUFFSIZE) { Serial.println("[ERR] RX buffer full"); return false; }
+  rxBuffer[rxTail] = p;
+  rxTail = (rxTail + 1) % RXBUFFSIZE;
+  rxCount++;
+  return true;
+}
+
+// Търси в RX буфера пакет който съвпада с очаквания ACK.
+// Ако го намери – го маха и връща true.
+bool rxFind(struct myPacket expected) {
+  for (uint8_t i = 0; i < rxCount; i++) {
+    uint8_t realIdx = (rxHead + i) % RXBUFFSIZE;
+    if (memcmp(&rxBuffer[realIdx], &expected, sizeof(myPacket)) == 0) {
+      // Изтриваме намерения елемент (shift)
+      for (uint8_t j = i; j < rxCount - 1; j++) {
+        uint8_t cur  = (rxHead + j)     % RXBUFFSIZE;
+        uint8_t next = (rxHead + j + 1) % RXBUFFSIZE;
+        rxBuffer[cur] = rxBuffer[next];
+      }
+      rxCount--;
+      rxTail = (rxTail == 0) ? RXBUFFSIZE - 1 : rxTail - 1;
+      return true;
     }
-
-    p->boatID   = 0;
-    p->moduleID = 0;
-    p->konsumator  = 0;
-    p->command  = 0;
-}
-
-void handleIdle(){
-}
-
-void handleError(const char* msg){
-  Serial.println(msg);
-}
-
-int findFirstZeroed(struct myPacket arr[], size_t len)
-{
-    struct myPacket zero = {0};
-
-    for (size_t i = 0; i < len; i++) {
-        if (memcmp(&arr[i], &zero, sizeof(struct myPacket)) == 0) {
-            return (int)i;  // found first zeroed element
-        }
-    }
-
-    return -1; // none found
-}
-
-struct myPacket feedbackBuffer[FBBUFFSIZE];
-unsigned long previousMillis[FBBUFFSIZE] = {0};  
-const long interval = 1000;        
-
-uint8_t bufferRetries[FBBUFFSIZE] = {0};  
-
-void sendCommand(uint8_t moduleID, uint8_t konsumator, uint8_t command){
-  myPacket pack = {BOATID, moduleID, konsumator, command};
-  LoRa.beginPacket();
-  LoRa.write((uint8_t*)&pack, sizeof(pack));
-  LoRa.endPacket();
-  int index = findFirstZeroed(feedbackBuffer, sizeof(feedbackBuffer)/sizeof(feedbackBuffer[0]));
-  if(index != -1){
-    feedbackBuffer[index] = pack;
-    bufferRetries[index] = 0;
-    previousMillis[index] = millis();
-    
-    currentState = AWAITFEEDBACK;
-    
-  }else{
-    handleError("feedback buffer is full");
   }
-  
-  
+  return false;
 }
 
-void awaitFeedback(myPacket *feedbackBuffer){
-  bool returnToIdle = 1;
-  bool feedbackRecieved[FBBUFFSIZE] = {0, 0};
-  for(int i=0; i<FBBUFFSIZE; i++){
-    if (memcmp(&feedbackBuffer[i], &ZERO_PACKET, sizeof(struct myPacket)) != 0) {
-        returnToIdle = 0;
-    }else{
-        feedbackRecieved[i] = 1;
-        
-    }
-  }
-
-  if(returnToIdle){
-    currentState = MYIDLE;
-  }
-  
-  myPacket myData;
+// ─────────────────────────────────────────────
+//  RADIO RECEIVE  –  чете всичко налично и пълни RX буфера
+// ─────────────────────────────────────────────
+void radioReceivePoll() {
   int packetSize = LoRa.parsePacket();
-  if(packetSize == sizeof(myPacket)) {
-      LoRa.readBytes((uint8_t*)&myData, sizeof(myData));
+  if (packetSize == sizeof(myPacket)) {
+    myPacket p;
+    LoRa.readBytes((uint8_t*)&p, sizeof(p));
+    Serial.printf("[RX] boatID=%08X mod=%u kons=%u cmd=%u\n",
+                  p.boatID, p.moduleID, p.konsumator, p.command);
+    rxPush(p);
+  } else if (packetSize > 0) {
+    while (LoRa.available()) LoRa.read(); // изхвърли боклук
   }
-  unsigned long currentMillis = millis();
+}
 
-  for(int i=0; i<FBBUFFSIZE; i++){
-    if(memcmp(&feedbackBuffer[i], &myData, sizeof(struct myPacket)) == 0){
-       resetPacket(&feedbackBuffer[i]);
-       feedbackRecieved[i] = 1;
-       previousMillis[i] = 0;
-       bufferRetries[i] = 0;
-       consumerStates[feedbackBuffer[i].konsumator-1] = feedbackBuffer[i].command;
+// ─────────────────────────────────────────────
+//  TX MANAGER  –  вика се от loop(), праща по един пакет наведнъж
+// ─────────────────────────────────────────────
+unsigned long lastTxTime = 0;
+bool          waitingForAck = false;   // не прати следващото докато не е ACK-нат текущото
+
+void txManager() {
+  if (waitingForAck) return;           // изчакай ACK преди нов пакет
+  if (txCount == 0) return;            // нищо в опашката
+
+  unsigned long now = millis();
+  if (now - lastTxTime < TX_DELAY_MS) return;  // изчакай 500ms между пращанията
+
+  myPacket p;
+  if (!txQueuePop(&p)) return;
+
+  LoRa.beginPacket();
+  LoRa.write((uint8_t*)&p, sizeof(p));
+  LoRa.endPacket();
+  LoRa.receive();
+
+  fbAdd(p);
+  lastTxTime  = now;
+  waitingForAck = true;
+
+  Serial.printf("[TX] mod=%u kons=%u cmd=%u\n", p.moduleID, p.konsumator, p.command);
+}
+
+// ─────────────────────────────────────────────
+//  FEEDBACK MANAGER  –  проверява RX буфера за ACK-ове, retry при нужда
+// ─────────────────────────────────────────────
+void feedbackManager() {
+  unsigned long now = millis();
+  bool anyPending   = false;
+
+  for (int i = 0; i < FBBUFFSIZE; i++) {
+    if (memcmp(&feedbackBuffer[i], &ZERO_PACKET, sizeof(myPacket)) == 0) continue;
+    anyPending = true;
+
+    // Провери дали вече сме получили ACK в RX буфера
+    if (rxFind(feedbackBuffer[i])) {
+      Serial.printf("[ACK] mod=%u kons=%u cmd=%u\n",
+                    feedbackBuffer[i].moduleID,
+                    feedbackBuffer[i].konsumator,
+                    feedbackBuffer[i].command);
+      if (feedbackBuffer[i].moduleID == preden)
+        modStatus.preden = communication_error;
+      else
+        modStatus.zaden = communication_error;
+      fbClear(i);
+      waitingForAck = false;  // може да праща следващото
+      continue;
     }
 
-    if (bufferRetries[i] >= MAXRETRIES){
-       handleError("Error in radio communication");
-       resetPacket(&feedbackBuffer[i]);
-       feedbackRecieved[i] = 1;
-       previousMillis[i] = 0;
-       bufferRetries[i] = 0;
-       if(feedbackBuffer[i].moduleID == preden){
+    // Timeout / retry
+    if (now - fbTimestamp[i] >= retryInterval) {
+      if (fbRetries[i] >= MAXRETRIES) {
+        Serial.printf("[ERR] No ACK mod=%u kons=%u\n",
+                      feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
+        if (feedbackBuffer[i].moduleID == preden)
           modStatus.preden = communication_error;
-       }else{
+        else
           modStatus.zaden = communication_error;
-       }
-    }
-
-    if(feedbackRecieved[i] != 1 && bufferRetries[i]<5){
-      if (currentMillis - previousMillis[i] >= interval) {
-        previousMillis[i] = currentMillis + random(0, 150);
+        fbClear(i);
+        waitingForAck = false;
+      } else {
+        // Retry с random jitter
+        fbTimestamp[i] = now + random(0, 150);
+        fbRetries[i]++;
         LoRa.beginPacket();
         LoRa.write((uint8_t*)&feedbackBuffer[i], sizeof(feedbackBuffer[i]));
         LoRa.endPacket();
-        bufferRetries[i]+=1;
-        if(feedbackBuffer[i].moduleID == preden){
-           modStatus.preden = working;
-        }else{
-           modStatus.zaden = working;
-        }
+        LoRa.receive();
+        Serial.printf("[RETRY %u] mod=%u kons=%u\n",
+                      fbRetries[i],
+                      feedbackBuffer[i].moduleID,
+                      feedbackBuffer[i].konsumator);
       }
     }
   }
+
+  if (!anyPending) waitingForAck = false;
 }
 
-volatile bool ev_hodovi = false;
-volatile bool ev_sirena = false;
-volatile bool ev_zadnaP = false;
-volatile bool ev_prednaP = false;
-
-volatile bool ev_rudan = false;
-volatile bool ev_rudan_allow = false;
-
-void isr_hodovi() {
-  ev_hodovi = true;
+// ─────────────────────────────────────────────
+//  PUBLIC API  –  просто добавя в опашката, НЕ праща веднага
+// ─────────────────────────────────────────────
+void sendCommand(uint8_t moduleID, uint8_t konsumator, uint8_t command) {
+  myPacket p = {BOATID, moduleID, konsumator, command};
+  if (!txQueuePush(p)) {
+    Serial.println("[ERR] TX queue full");
+  }
 }
 
-void isr_sirena() {
-  ev_sirena = true;
-}
-
-void isr_zadnaP() {
-  ev_zadnaP = true;
-}
-
-void isr_prednaP() {
-  ev_prednaP = true;
-}
-
-void isr_rudan() {
-  ev_rudan = true;
-}
-bool allow_rudan = 0;
-void isr_rudan_allow() {
-  ev_rudan_allow = true;
-}
-
-void setup(){
+// ─────────────────────────────────────────────
+void setup() {
   Serial.begin(115200);
 
-  // set all pins as INPUT_PULLUP
-  pinMode(hod_svetl,   INPUT_PULLUP);
-  pinMode(sirenaa,      INPUT_PULLUP);
-  pinMode(zadna_p,     INPUT_PULLUP);
-  pinMode(predna_p,    INPUT_PULLUP);
-  pinMode(rudann,       INPUT_PULLUP);
-  pinMode(rudan_allow, INPUT_PULLUP);
-  pinMode(led_pin,     OUTPUT);
+  SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
+  LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
 
-  // attach pin change interrupts
-  attachPCINT(digitalPinToPCINT(hod_svetl),  isr_hodovi,  CHANGE);
-  attachPCINT(digitalPinToPCINT(sirena),     isr_sirena,  CHANGE);
-  attachPCINT(digitalPinToPCINT(zadna_p),    isr_zadnaP,  CHANGE);
-  attachPCINT(digitalPinToPCINT(predna_p),   isr_prednaP, CHANGE);
-  attachPCINT(digitalPinToPCINT(rudan),      isr_rudan,   CHANGE);
-  attachPCINT(digitalPinToPCINT(rudan_allow),      isr_rudan_allow,   CHANGE);
-
-  if(!LoRa.begin(433E6)){
-      Serial.println("LoRa transmitter not working");
-  }
+  if (!LoRa.begin(433E6)) Serial.println("LoRa transmitter not working");
   LoRa.setSpreadingFactor(7);
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
   LoRa.enableCrc();
+  LoRa.receive();
 
-  sendCommand(zaden, hodovi, OFF);
-  sendCommand(zaden, sirena, OFF);
-  sendCommand(zaden, zadnaP, OFF);
-  sendCommand(preden, prednaP, OFF);
-  sendCommand(preden, rudan, OFF);
+  // Всички команди се добавят в опашката – txManager ги праща по ред с 500ms пауза
+  sendCommand(zaden, hodovi,  ON);
+  sendCommand(zaden, sirena,  OFF);
+  sendCommand(zaden, zadnaP,  ON);
+  sendCommand(preden, prednaP, ON);
+  sendCommand(preden, rudan,   ON);
 }
 
-void loop(){
-  if (ev_hodovi) {
-    ev_hodovi = false;
-  
-    if (digitalRead(hod_svetl) == LOW)
-      sendCommand(zaden, hodovi, ON);
-    else
-      sendCommand(zaden, hodovi, OFF);
-  }
-  
-  if (ev_sirena) {
-    ev_sirena = false;
-  
-    if (digitalRead(sirenaa) == LOW)
-      sendCommand(zaden, sirena, ON);
-    else
-      sendCommand(zaden, sirena, OFF);
-  }
-  
-  if (ev_zadnaP) {
-    ev_zadnaP = false;
-  
-    if (digitalRead(zadna_p) == LOW)
-      sendCommand(zaden, zadnaP, ON);
-    else
-      sendCommand(zaden, zadnaP, OFF);
-  }
-  
-  if (ev_prednaP) {
-    ev_prednaP = false;
-  
-    if (digitalRead(predna_p) == LOW)
-      sendCommand(preden, prednaP, ON);
-    else
-      sendCommand(preden, prednaP, OFF);
-  }
-  
-  if (ev_rudan_allow) {
-    ev_rudan_allow = false;
-  
-    allow_rudan = (digitalRead(rudan_allow) == LOW);
-    if(!allow_rudan)sendCommand(preden, rudan, OFF);
-  }
-  
-  if (ev_rudan) {
-    ev_rudan = false;
-  
-    if (digitalRead(rudan) == LOW && allow_rudan) {
-      sendCommand(preden, rudan, ON);
-    } else {
-      sendCommand(preden, rudan, OFF);
-    }
-  }
-  switch(currentState) {
-    case MYIDLE:
-      handleIdle();
-      break;
-    case AWAITFEEDBACK:
-      awaitFeedback(feedbackBuffer);
-      break;
-    default:
-      break;
-  }
+void loop() {
+  radioReceivePoll();   // 1. чети каквото е дошло → RX буфер
+  feedbackManager();    // 2. обработвай ACK-ове / retry
+  txManager();          // 3. праща следващото от TX опашката ако може
 }
