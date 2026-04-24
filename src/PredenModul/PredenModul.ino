@@ -89,13 +89,13 @@ void processRx() {
     if (p.konsumator != rudan) {
       int idx = p.konsumator - 4;  // prednaP=4 → idx=0
       digitalWrite(pins[idx], p.command);
-      Serial.printf("[CMD] pin idx=%d cmd=%u\n", idx, p.command);
+      //Serial.printf("[CMD] pin idx=%d cmd=%u\n", idx, p.command);
     } else {
       // rudan управлява два пина
       for (int i = pins_count - 2; i < pins_count; i++) {
         digitalWrite(pins[i], p.command);
       }
-      Serial.printf("[CMD] rudan cmd=%u\n", p.command);
+      //Serial.printf("[CMD] rudan cmd=%u\n", p.command);
     }
 
     // Насрочи ACK след 500ms
@@ -114,7 +114,7 @@ void ackManager() {
       LoRa.write((uint8_t*)&ackQueue[i], sizeof(ackQueue[i]));
       LoRa.endPacket();
       LoRa.receive();
-      Serial.printf("[ACK] kons=%u cmd=%u sent\n", ackQueue[i].konsumator, ackQueue[i].command);
+      //Serial.printf("[ACK] kons=%u cmd=%u sent\n", ackQueue[i].konsumator, ackQueue[i].command);
 
       for (uint8_t j = i; j < ackCount - 1; j++) {
         ackQueue[j]  = ackQueue[j + 1];
