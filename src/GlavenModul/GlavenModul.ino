@@ -36,7 +36,7 @@ const char* AP_PASS = "12345678";   // мин. 8 символа за WPA2
 #define TX_DELAY_MS  500
 
 enum modules     { preden = 1, zaden };
-enum moduleStatus{ working = 1, communication_error };
+enum moduleStatus { working = 1, communication_error };
 enum konsumatori { hodovi = 1, sirena, zadnaP, prednaP, rudan };
 enum commands    { OFF = 0, ON = 1 };
 
@@ -50,7 +50,10 @@ struct __attribute__((packed)) myPacket {
 const myPacket ZERO_PACKET = {0};
 
 // ── Статус ────────────────────────────────────────────────────────────────
-struct { uint8_t preden = working; uint8_t zaden = working; } modStatus;
+struct {
+  uint8_t preden = working;
+  uint8_t zaden = working;
+} modStatus;
 
 // Потвърдено (ACK-нато) състояние — индекс = konsumator (1..5)
 uint8_t consumerState[6] = {0};
@@ -137,7 +140,7 @@ bool rxFind(myPacket expected) {
     uint8_t ri = (rxHead + i) % RXBUFFSIZE;
     if (memcmp(&rxBuffer[ri], &expected, sizeof(myPacket)) == 0) {
       for (uint8_t j = i; j < rxCount - 1; j++) {
-        rxBuffer[(rxHead+j)%RXBUFFSIZE] = rxBuffer[(rxHead+j+1)%RXBUFFSIZE];
+        rxBuffer[(rxHead + j) % RXBUFFSIZE] = rxBuffer[(rxHead + j + 1) % RXBUFFSIZE];
       }
       rxCount--;
       rxTail = (rxTail == 0) ? RXBUFFSIZE - 1 : rxTail - 1;
@@ -173,9 +176,15 @@ void handleStatus() {
 }
 
 void handleCommand() {
-  if (server.method() != HTTP_POST) { server.send(405); return; }
+  if (server.method() != HTTP_POST) {
+    server.send(405);
+    return;
+  }
   StaticJsonDocument<128> doc;
-  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Bad JSON"); return; }
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "text/plain", "Bad JSON");
+    return;
+  }
   myPacket p = { BOATID, (uint8_t)(int)doc["moduleID"], (uint8_t)(int)doc["konsumator"], (uint8_t)(int)doc["command"] };
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.send(txPush(p) ? 200 : 503, "application/json", txPush(p) ? "{\"ok\":true}" : "{\"ok\":false}");
@@ -185,9 +194,15 @@ void handleCommand() {
 
 // По-чиста версия на handleCommand:
 void handleCommandClean() {
-  if (server.method() != HTTP_POST) { server.send(405); return; }
+  if (server.method() != HTTP_POST) {
+    server.send(405);
+    return;
+  }
   StaticJsonDocument<128> doc;
-  if (deserializeJson(doc, server.arg("plain"))) { server.send(400, "text/plain", "Bad JSON"); return; }
+  if (deserializeJson(doc, server.arg("plain"))) {
+    server.send(400, "text/plain", "Bad JSON");
+    return;
+  }
   myPacket p = {
     BOATID,
     (uint8_t)(int)doc["moduleID"],
@@ -227,7 +242,7 @@ void radioReceivePoll() {
 
 void txManager() {
   char _lb[LOG_MSG_LEN];
-  
+
 
   if (waitingForAck || txCount == 0) return;
   if (millis() - lastTxTime < TX_DELAY_MS) return;
@@ -242,8 +257,8 @@ void txManager() {
   waitingForAck = true;
   Serial.printf("[TX] mod=%u kons=%u cmd=%u\n", p.moduleID, p.konsumator, p.command);
   snprintf(_lb, sizeof(_lb), "[TX] -> mod=%u kons=%u cmd=%s",  // ← ADD
-    p.moduleID, p.konsumator, p.command == ON ? "ON" : "OFF");
-  logAdd(_lb);    
+           p.moduleID, p.konsumator, p.command == ON ? "ON" : "OFF");
+  logAdd(_lb);
 }
 
 void feedbackManager() {
@@ -258,20 +273,20 @@ void feedbackManager() {
       if (k >= 1 && k <= 5) consumerState[k] = feedbackBuffer[i].command;
       if (feedbackBuffer[i].moduleID == preden) modStatus.preden = working;
       else                                       modStatus.zaden  = working;
-    // ── ADD ──────────────────────────────────────────────────────────
+      // ── ADD ──────────────────────────────────────────────────────────
       char _lb[LOG_MSG_LEN];
-    if(fbRetries[i] != 0){
-    snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след %u повторения",
-        feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-        feedbackBuffer[i].command == ON ? "ON" : "OFF", fbRetries[i]);
-    logAdd(_lb);
-    }else{
-    snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след 0 повторения",
-        feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-        feedbackBuffer[i].command == ON ? "ON" : "OFF");
-    logAdd(_lb);
-    }
-      
+      if (fbRetries[i] != 0) {
+        snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след %u повторения",
+                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
+                 feedbackBuffer[i].command == ON ? "ON" : "OFF", fbRetries[i]);
+        logAdd(_lb);
+      } else {
+        snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след 0 повторения",
+                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
+                 feedbackBuffer[i].command == ON ? "ON" : "OFF");
+        logAdd(_lb);
+      }
+
       // ─────────────────────────────────────────────────────────────────
       fbClear(i);
       waitingForAck = false;
@@ -282,10 +297,10 @@ void feedbackManager() {
         if (feedbackBuffer[i].moduleID == preden) modStatus.preden = communication_error;
         else                                       modStatus.zaden  = communication_error;
         Serial.printf("[ERR] No ACK mod=%u kons=%u\n", feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
-    // ── ADD ──────────────────────────────────────────────────────────
+        // ── ADD ──────────────────────────────────────────────────────────
         char _lb[LOG_MSG_LEN];
         snprintf(_lb, sizeof(_lb), "[ERR] Без ACK след %u повторения — mod=%u kons=%u. ГРЕШКА В КОМУНИКАЦИЯТА.",
-          MAXRETRIES, feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
+                 MAXRETRIES, feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
         logAdd(_lb);
         // ─────────────────────────────────────────────────────────────────
         fbClear(i);
@@ -298,11 +313,11 @@ void feedbackManager() {
         LoRa.endPacket();
         LoRa.receive();
         Serial.printf("[RETRY %u]\n", fbRetries[i]);
-    // ── ADD ──────────────────────────────────────────────────────────
+        // ── ADD ──────────────────────────────────────────────────────────
         char _lb[LOG_MSG_LEN];
         snprintf(_lb, sizeof(_lb), "[RETRY] mod=%u kons=%u — повторение #%u / %u",
-          feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-          fbRetries[i], MAXRETRIES);
+                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
+                 fbRetries[i], MAXRETRIES);
         logAdd(_lb);
         // ─────────────────────────────────────────────────────────────────
       }
@@ -368,20 +383,20 @@ void setup() {
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
-  
+
   if (!LoRa.begin(433E6)) {
     Serial.println("[ERR] LoRa не стартира!");
     logAdd("[ERR] LoRa не стартира! Проверете хардуера.");  // ← ADD
   }
-  
+
   LoRa.setSpreadingFactor(7);
   LoRa.setSignalBandwidth(125E3);
   LoRa.setCodingRate4(5);
   LoRa.enableCrc();
   LoRa.receive();
-  
-  logAdd("[SYS] Системата стартира. LoRa OK. Изпращане на OFF до всички консуматори."); 
-  
+
+  logAdd("[SYS] Системата стартира. LoRa OK. Изпращане на OFF до всички консуматори.");
+
   // Изпрати OFF на всички консуматори при старт
   sendCommand(zaden,  hodovi,  OFF);
   sendCommand(zaden,  sirena,  OFF);
@@ -466,11 +481,10 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
   font-weight:700;
   letter-spacing:.04em;
   border-radius:var(--radius);
-  border:2px solid var(--border);
-
-  /* ✅ FIXED OFF STATE */
-  background:var(--surface);
-  color:var(--text);
+  background:#3a3832;        /* светло тъмно сиво */
+  color:#f1efe8;             /* мек светъл текст */
+  border:2px solid #5a574f;  /* по-светла рамка */
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
 
   cursor:pointer;
   transition:background .2s,color .2s,border-color .2s,transform .1s, box-shadow .2s;
@@ -512,7 +526,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
   border-radius:50%;
 
   /* ✅ darker visible dot when OFF */
-  background:var(--text-soft);
+  background:#8c877c; 
 
   flex-shrink:0;
   transition:background .2s,box-shadow .2s;
@@ -546,11 +560,10 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--tex
   font-weight:700;
   letter-spacing:.05em;
   border-radius:var(--radius);
-  border:2px solid var(--border);
-
-  /* ✅ FIXED OFF STATE */
-  background:var(--surface);
-  color:var(--text);
+  background:#3a3832;        /* същия тон за консистентност */
+  color:#f1efe8;
+  border:2px solid #5a574f;
+  box-shadow:0 2px 6px rgba(0,0,0,0.25);
 
   cursor:pointer;
   user-select:none;
@@ -892,7 +905,6 @@ h1{font-size:.85rem;font-weight:700;letter-spacing:.12em;color:#e8e6df;text-tran
 .WARN{background:rgba(230,140,30,0.1);color:#d4890a;border:1px solid rgba(230,140,30,0.25)}
 .msg{color:#c8c4b8;word-break:break-word}
 .sep{border:none;border-top:1px solid #1a1916;margin:3px 0}
-
 </style>
 </head>
 <body>
