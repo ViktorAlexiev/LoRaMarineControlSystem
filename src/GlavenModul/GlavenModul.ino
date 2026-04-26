@@ -256,8 +256,16 @@ void txManager() {
   lastTxTime    = millis();
   waitingForAck = true;
   Serial.printf("[TX] mod=%u kons=%u cmd=%u\n", p.moduleID, p.konsumator, p.command);
-  snprintf(_lb, sizeof(_lb), "[TX] -> mod=%u kons=%u cmd=%s",  // ← ADD
-           p.moduleID, p.konsumator, p.command == ON ? "ON" : "OFF");
+  const char* modName_tx  = (p.moduleID == preden) ? "Преден модул" : "Заден модул";
+  const char* konsName_tx;
+  if      (p.konsumator == hodovi)  konsName_tx = "Ходови светлини";
+  else if (p.konsumator == sirena)  konsName_tx = "Сирена";
+  else if (p.konsumator == zadnaP)  konsName_tx = "Задна помпа";
+  else if (p.konsumator == prednaP) konsName_tx = "Предна помпа";
+  else if (p.konsumator == rudan)   konsName_tx = "Рудан";
+  else                              konsName_tx = "Неизвестен";
+  const char* cmdName_tx = (p.command == ON) ? "Включи" : "Изключи";
+  snprintf(_lb, sizeof(_lb), "[TX] -> %s / %s / %s", modName_tx, konsName_tx, cmdName_tx);
   logAdd(_lb);
 }
 
@@ -276,14 +284,30 @@ void feedbackManager() {
       // ── ADD ──────────────────────────────────────────────────────────
       char _lb[LOG_MSG_LEN];
       if (fbRetries[i] != 0) {
-        snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след %u повторения",
-                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-                 feedbackBuffer[i].command == ON ? "ON" : "OFF", fbRetries[i]);
+        const char* modName_ack  = (feedbackBuffer[i].moduleID == preden) ? "Преден модул" : "Заден модул";
+    const char* konsName_ack;
+    if      (feedbackBuffer[i].konsumator == hodovi)  konsName_ack = "Ходови светлини";
+    else if (feedbackBuffer[i].konsumator == sirena)  konsName_ack = "Сирена";
+    else if (feedbackBuffer[i].konsumator == zadnaP)  konsName_ack = "Задна помпа";
+    else if (feedbackBuffer[i].konsumator == prednaP) konsName_ack = "Предна помпа";
+    else if (feedbackBuffer[i].konsumator == rudan)   konsName_ack = "Рудан";
+    else                                              konsName_ack = "Неизвестен";
+    const char* cmdName_ack = (feedbackBuffer[i].command == ON) ? "Включи" : "Изключи";
+    snprintf(_lb, sizeof(_lb), "[ACK] %s / %s / %s — потвърдено след %u повторения",
+         modName_ack, konsName_ack, cmdName_ack, fbRetries[i]);
         logAdd(_lb);
       } else {
-        snprintf(_lb, sizeof(_lb), "[ACK] mod=%u kons=%u cmd=%s — потвърдено след 0 повторения",
-                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-                 feedbackBuffer[i].command == ON ? "ON" : "OFF");
+    const char* modName_ack  = (feedbackBuffer[i].moduleID == preden) ? "Преден модул" : "Заден модул";
+    const char* konsName_ack;
+    if      (feedbackBuffer[i].konsumator == hodovi)  konsName_ack = "Ходови светлини";
+    else if (feedbackBuffer[i].konsumator == sirena)  konsName_ack = "Сирена";
+    else if (feedbackBuffer[i].konsumator == zadnaP)  konsName_ack = "Задна помпа";
+    else if (feedbackBuffer[i].konsumator == prednaP) konsName_ack = "Предна помпа";
+    else if (feedbackBuffer[i].konsumator == rudan)   konsName_ack = "Рудан";
+    else                                              konsName_ack = "Неизвестен";
+    const char* cmdName_ack = (feedbackBuffer[i].command == ON) ? "Включи" : "Изключи";
+        snprintf(_lb, sizeof(_lb), "[ACK] %s / %s / %s — потвърдено след 0 повторения",
+         modName_ack, konsName_ack, cmdName_ack);
         logAdd(_lb);
       }
 
@@ -299,8 +323,16 @@ void feedbackManager() {
         Serial.printf("[ERR] No ACK mod=%u kons=%u\n", feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
         // ── ADD ──────────────────────────────────────────────────────────
         char _lb[LOG_MSG_LEN];
-        snprintf(_lb, sizeof(_lb), "[ERR] Без ACK след %u повторения — mod=%u kons=%u. ГРЕШКА В КОМУНИКАЦИЯТА.",
-                 MAXRETRIES, feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator);
+        const char* modName_err  = (feedbackBuffer[i].moduleID == preden) ? "Преден модул" : "Заден модул";
+        const char* konsName_err;
+        if      (feedbackBuffer[i].konsumator == hodovi)  konsName_err = "Ходови светлини";
+        else if (feedbackBuffer[i].konsumator == sirena)  konsName_err = "Сирена";
+        else if (feedbackBuffer[i].konsumator == zadnaP)  konsName_err = "Задна помпа";
+        else if (feedbackBuffer[i].konsumator == prednaP) konsName_err = "Предна помпа";
+        else if (feedbackBuffer[i].konsumator == rudan)   konsName_err = "Рудан";
+        else                                              konsName_err = "Неизвестен";
+        snprintf(_lb, sizeof(_lb), "[ERR] %s / %s — без ACK след %u повторения. ГРЕШКА В КОМУНИКАЦИЯТА.",
+             modName_err, konsName_err, MAXRETRIES);
         logAdd(_lb);
         // ─────────────────────────────────────────────────────────────────
         fbClear(i);
@@ -315,10 +347,17 @@ void feedbackManager() {
         Serial.printf("[RETRY %u]\n", fbRetries[i]);
         // ── ADD ──────────────────────────────────────────────────────────
         char _lb[LOG_MSG_LEN];
-        snprintf(_lb, sizeof(_lb), "[RETRY] mod=%u kons=%u — повторение #%u / %u",
-                 feedbackBuffer[i].moduleID, feedbackBuffer[i].konsumator,
-                 fbRetries[i], MAXRETRIES);
-        logAdd(_lb);
+        const char* modName_ret  = (feedbackBuffer[i].moduleID == preden) ? "Преден модул" : "Заден модул";
+        const char* konsName_ret;
+        if      (feedbackBuffer[i].konsumator == hodovi)  konsName_ret = "Ходови светлини";
+        else if (feedbackBuffer[i].konsumator == sirena)  konsName_ret = "Сирена";
+        else if (feedbackBuffer[i].konsumator == zadnaP)  konsName_ret = "Задна помпа";
+        else if (feedbackBuffer[i].konsumator == prednaP) konsName_ret = "Предна помпа";
+        else if (feedbackBuffer[i].konsumator == rudan)   konsName_ret = "Рудан";
+        else                                              konsName_ret = "Неизвестен";
+        snprintf(_lb, sizeof(_lb), "[RETRY] %s / %s — повторение #%u / %u",
+            modName_ret, konsName_ret, fbRetries[i], MAXRETRIES);
+        logAdd(_lb); 
         // ─────────────────────────────────────────────────────────────────
       }
     }
